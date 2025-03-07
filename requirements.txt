@@ -1,0 +1,10 @@
+customtkinter
+pillow
+tk
+pystray
+ewmh
+pywebview
+flask
+PyQt6
+PyQtWebEngine
+PyQt6-WebEngine
