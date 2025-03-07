@@ -4,11 +4,18 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile
 import threading
-from flask import Flask, jsonify, request, render_template_string
+from flask import Flask, jsonify, request, render_template_string, send_file
+from werkzeug.utils import secure_filename
 import datetime
 import json
+import os
+import uuid
 
 app = Flask(__name__)
+UPLOAD_FOLDER = 'uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Disable Jinja2 variable autoescaping for Vue.js
 app.jinja_env.variable_start_string = '[['
@@ -22,17 +29,47 @@ class ChatAPI:
             {"id": 2, "name": "Bob", "status": "online", "last_message": "Did you see the new update?", "time": "09:45"},
             {"id": 3, "name": "Charlie", "status": "offline", "last_message": "Meeting at 3 PM", "time": "Yesterday"}
         ]
+        self.typing_users = set()
+        self.reactions = {}  # message_id -> {emoji: [user_ids]}
 
-    def send_message(self, message):
+    def send_message(self, message, file=None, reply_to=None):
         timestamp = datetime.datetime.now().strftime("%H:%M")
         new_message = {
             "id": len(self.messages) + 1,
             "text": message,
             "sender": "user",
-            "timestamp": timestamp
+            "timestamp": timestamp,
+            "reactions": {},
+            "reply_to": reply_to
         }
+        
+        if file:
+            new_message["attachment"] = {
+                "name": file.filename,
+                "path": file.filename,
+                "type": file.content_type
+            }
+        
         self.messages.append(new_message)
         return new_message
+
+    def add_reaction(self, message_id, emoji, user_id):
+        if message_id not in self.reactions:
+            self.reactions[message_id] = {}
+        if emoji not in self.reactions[message_id]:
+            self.reactions[message_id][emoji] = []
+        if user_id not in self.reactions[message_id][emoji]:
+            self.reactions[message_id][emoji].append(user_id)
+            return True
+        return False
+
+    def remove_reaction(self, message_id, emoji, user_id):
+        if (message_id in self.reactions and 
+            emoji in self.reactions[message_id] and 
+            user_id in self.reactions[message_id][emoji]):
+            self.reactions[message_id][emoji].remove(user_id)
+            return True
+        return False
 
     def get_messages(self):
         return self.messages
@@ -50,20 +87,61 @@ def index():
 @app.route('/api/messages', methods=['GET', 'POST'])
 def handle_messages():
     if request.method == 'POST':
-        message = request.json.get('message')
-        new_message = chat_api.send_message(message)
+        data = request.json or {}
+        message = data.get('message', '')
+        reply_to = data.get('reply_to')
+        file = request.files.get('file')
+        
+        if file:
+            filename = secure_filename(file.filename)
+            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        
+        new_message = chat_api.send_message(message, file, reply_to)
+        
         # Simulate received message
         timestamp = datetime.datetime.now().strftime("%H:%M")
         echo_message = {
             "id": len(chat_api.messages) + 1,
             "text": f"Echo: {message}",
             "sender": "other",
-            "timestamp": timestamp
+            "timestamp": timestamp,
+            "reactions": {}
         }
         chat_api.messages.append(echo_message)
         return jsonify({"sent": new_message, "received": echo_message})
     else:
         return jsonify(chat_api.get_messages())
+
+@app.route('/api/messages/<int:message_id>/reactions', methods=['POST'])
+def handle_reactions(message_id):
+    data = request.json
+    emoji = data.get('emoji')
+    user_id = data.get('user_id', 1)  # Default user ID
+    action = data.get('action', 'add')
+    
+    if action == 'add':
+        success = chat_api.add_reaction(message_id, emoji, user_id)
+    else:
+        success = chat_api.remove_reaction(message_id, emoji, user_id)
+    
+    return jsonify({"success": success})
+
+@app.route('/api/typing', methods=['POST'])
+def handle_typing():
+    data = request.json
+    user_id = data.get('user_id')
+    is_typing = data.get('typing', False)
+    
+    if is_typing:
+        chat_api.typing_users.add(user_id)
+    else:
+        chat_api.typing_users.discard(user_id)
+    
+    return jsonify({"typing_users": list(chat_api.typing_users)})
+
+@app.route('/uploads/<path:filename>')
+def serve_file(filename):
+    return send_file(os.path.join(app.config['UPLOAD_FOLDER'], filename))
 
 @app.route('/api/contacts')
 def handle_contacts():
@@ -584,13 +662,13 @@ HTML = '''
 
         /* Fixed position emoji picker */
         .emoji-picker {
-            position: fixed;
-            bottom: 80px; /* Height of input area + padding */
-            right: 20px;
+            position: absolute;
+            bottom: 60px;
+            left: 0;
             background: var(--bg-light);
             border-radius: 8px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            padding: 10px;
+            padding: 8px;
             display: grid;
             grid-template-columns: repeat(8, 1fr);
             gap: 4px;
@@ -598,15 +676,21 @@ HTML = '''
         }
 
         .emoji-item {
-            padding: 4px;
+            padding: 6px;
             cursor: pointer;
             border-radius: 4px;
             transition: all 0.2s;
+            font-size: 20px;
         }
 
         .emoji-item:hover {
             background: rgba(255,255,255,0.1);
             transform: scale(1.1);
+        }
+
+        /* File upload input */
+        .file-input {
+            display: none;
         }
 
         /* Message context menu */
@@ -767,12 +851,31 @@ HTML = '''
                         @input="autoResize"
                         placeholder="Type a message..."
                         rows="1"
+                        ref="messageInput"
                     ></textarea>
                     <small class="input-hint">Shift + Enter for new line</small>
                     <div class="input-actions">
-                        <button class="action-button">😊</button>
-                        <button class="action-button">📎</button>
-                        <button class="action-button">🎤</button>
+                        <button class="action-button" @click="toggleEmojiPicker">😊</button>
+                        <input 
+                            type="file" 
+                            class="file-input" 
+                            ref="fileInput"
+                            @change="handleFileUpload"
+                            accept="image/*,video/*,audio/*,.pdf,.doc,.docx"
+                        >
+                        <button class="action-button" @click="$refs.fileInput.click()">📎</button>
+                        <button class="action-button" @click="toggleVoiceRecording">🎤</button>
+                    </div>
+                    <!-- Emoji Picker Panel -->
+                    <div v-if="showEmojiPicker" class="emoji-picker">
+                        <div 
+                            v-for="emoji in availableEmojis" 
+                            :key="emoji"
+                            class="emoji-item"
+                            @click="insertEmoji(emoji)"
+                        >
+                            {{ emoji }}
+                        </div>
                     </div>
                 </div>
                 <button class="send-button" @click="sendMessage">Send</button>
@@ -805,16 +908,17 @@ HTML = '''
                     isTyping: false,
                     selectedContact: null,
                     showEmojiPicker: false,
-                    isRecording: false,
+                    replyingTo: null,
+                    typingTimeout: null,
+                    availableEmojis: ['😊', '😂', '❤️', '👍', '🎉', '😎', '🤔', '😍', 
+                                     '🥳', '😮', '😢', '😡', '🤝', '👋', '🙏', '✨'],
                     contextMenu: {
                         show: false,
                         x: 0,
                         y: 0,
                         message: null
                     },
-                    emojis: ['😊', '😂', '❤️', '👍', '🎉', '🔥', '😎', '🤔'],
-                    typingUser: null,
-                    replyingTo: null
+                    isRecording: false
                 }
             },
             methods: {
@@ -887,8 +991,15 @@ HTML = '''
                     this.showEmojiPicker = !this.showEmojiPicker
                 },
                 insertEmoji(emoji) {
-                    this.newMessage += emoji
+                    const textarea = this.$refs.messageInput
+                    const start = textarea.selectionStart
+                    const end = textarea.selectionEnd
+                    this.newMessage = this.newMessage.substring(0, start) + emoji + this.newMessage.substring(end)
                     this.showEmojiPicker = false
+                    this.$nextTick(() => {
+                        textarea.focus()
+                        textarea.selectionStart = textarea.selectionEnd = start + emoji.length
+                    })
                 },
                 startRecording() {
                     this.isRecording = true
@@ -899,12 +1010,16 @@ HTML = '''
                     // Add stop recording logic here
                 },
                 showContextMenu(event, message) {
+                    event.preventDefault();
                     this.contextMenu = {
                         show: true,
                         x: event.clientX,
                         y: event.clientY,
-                        message
-                    }
+                        message: message
+                    };
+                },
+                hideContextMenu() {
+                    this.contextMenu.show = false;
                 },
                 replyToMessage() {
                     this.replyingTo = this.contextMenu.message
@@ -939,6 +1054,92 @@ HTML = '''
                     textarea.style.height = "24px";
                     const newHeight = Math.min(textarea.scrollHeight, 100);
                     textarea.style.height = newHeight + "px";
+                },
+                async handleFileUpload(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('message', `Sent a file: ${file.name}`);
+
+                    try {
+                        const response = await axios.post('/api/messages', formData, {
+                            headers: {
+                                'Content-Type': 'multipart/form-data'
+                            }
+                        });
+                        this.messages.push(response.data.sent);
+                        this.scrollToBottom();
+                    } catch (error) {
+                        console.error('Error uploading file:', error);
+                    }
+                    
+                    // Reset file input
+                    this.$refs.fileInput.value = '';
+                },
+                toggleVoiceRecording() {
+                    if (!this.isRecording) {
+                        // Start recording
+                        navigator.mediaDevices.getUserMedia({ audio: true })
+                            .then(stream => {
+                                this.isRecording = true;
+                                this.mediaRecorder = new MediaRecorder(stream);
+                                this.audioChunks = [];
+
+                                this.mediaRecorder.ondataavailable = (event) => {
+                                    this.audioChunks.push(event.data);
+                                };
+
+                                this.mediaRecorder.onstop = () => {
+                                    const audioBlob = new Blob(this.audioChunks, { type: 'audio/wav' });
+                                    const formData = new FormData();
+                                    formData.append('file', audioBlob, 'voice-message.wav');
+                                    formData.append('message', 'Voice message');
+                                    
+                                    axios.post('/api/messages', formData, {
+                                        headers: {
+                                            'Content-Type': 'multipart/form-data'
+                                        }
+                                    }).then(response => {
+                                        this.messages.push(response.data.sent);
+                                        this.scrollToBottom();
+                                    }).catch(error => {
+                                        console.error('Error sending voice message:', error);
+                                    });
+                                };
+
+                                this.mediaRecorder.start();
+                            })
+                            .catch(error => {
+                                console.error('Error accessing microphone:', error);
+                            });
+                    } else {
+                        // Stop recording
+                        this.mediaRecorder.stop();
+                        this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                        this.isRecording = false;
+                    }
+                },
+                setReplyTo(message) {
+                    this.replyingTo = message;
+                    this.$refs.messageInput.focus();
+                },
+                cancelReply() {
+                    this.replyingTo = null;
+                },
+                updateTypingStatus() {
+                    clearTimeout(this.typingTimeout);
+                    
+                    if (!this.isTyping) {
+                        this.isTyping = true;
+                        axios.post('/api/typing', { typing: true });
+                    }
+
+                    this.typingTimeout = setTimeout(() => {
+                        this.isTyping = false;
+                        axios.post('/api/typing', { typing: false });
+                    }, 2000);
                 }
             },
             mounted() {
@@ -946,9 +1147,11 @@ HTML = '''
                 this.loadContacts()
                 
                 // Close context menu on click outside
-                document.addEventListener('click', () => {
-                    this.contextMenu.show = false
-                })
+                document.addEventListener('click', this.hideContextMenu)
+            },
+            beforeUnmount() {
+                // Clean up event listener
+                document.removeEventListener('click', this.hideContextMenu)
             }
         }).mount('#app')
     </script>
