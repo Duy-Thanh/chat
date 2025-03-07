@@ -77,6 +77,10 @@ HTML = '''
     <title>Secure Chat</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <!-- Add emoji picker -->
+    <link href="https://emoji-css.afeld.me/emoji.css" rel="stylesheet">
+    <!-- Add waveform visualizer -->
+    <script src="https://unpkg.com/wavesurfer.js"></script>
     <style>
         :root {
             --primary: #4171FF;
@@ -249,6 +253,7 @@ HTML = '''
             display: flex;
             flex-direction: column;
             gap: 10px;
+            margin-bottom: 80px; /* Height of input area */
         }
 
         .message {
@@ -290,58 +295,84 @@ HTML = '''
             color: rgba(255,255,255,0.7);
         }
 
-        /* Enhanced input area */
+        /* Fixed position input area with controlled height */
         .input-area {
-            padding: 20px;
+            position: fixed;
+            bottom: 0;
+            right: 0;
+            left: 300px; /* Width of sidebar */
             background: var(--bg-light);
+            padding: 15px 20px;
+            border-top: 1px solid #333;
             display: flex;
-            gap: 12px;
-            align-items: center;
+            gap: 10px;
+            height: 70px; /* Fixed height */
         }
 
         .input-wrapper {
             flex: 1;
-            position: relative;
             display: flex;
-            align-items: center;
             background: var(--bg-dark);
-            border-radius: 24px;
-            padding: 4px;
+            border-radius: 20px;
+            padding: 8px 16px;
+            position: relative;
+            height: 40px; /* Fixed height */
+            align-items: center;
         }
 
+        /* Message input with scroll */
         .message-input {
             flex: 1;
-            padding: 12px 16px;
+            height: 24px;
             background: transparent;
             border: none;
             color: var(--text);
             font-size: 14px;
+            padding: 0;
+            overflow-x: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
         }
 
         .message-input:focus {
             outline: none;
         }
 
+        /* Input actions */
         .input-actions {
             display: flex;
             gap: 8px;
-            padding: 0 12px;
+            align-items: center;
+            margin-left: 8px;
         }
 
-        .send-button {
-            padding: 12px 24px;
-            border-radius: 24px;
+        .action-button {
+            background: none;
             border: none;
-            background: var(--primary);
             color: var(--text);
-            font-weight: 500;
             cursor: pointer;
-            transition: all 0.3s;
+            padding: 4px;
+            font-size: 18px;
+            opacity: 0.7;
+            transition: all 0.2s;
         }
 
-        .send-button:hover {
-            background: var(--primary-light);
-            transform: translateY(-1px);
+        .action-button:hover {
+            opacity: 1;
+        }
+
+        /* Send button */
+        .send-button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 20px;
+            padding: 8px 20px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            height: 40px;
+            white-space: nowrap;
         }
 
         /* Typing indicator */
@@ -369,6 +400,208 @@ HTML = '''
         @keyframes typing {
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-4px); }
+        }
+
+        /* Message reactions */
+        .message-reactions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 4px;
+        }
+
+        .reaction {
+            background: rgba(255,255,255,0.1);
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .reaction:hover {
+            background: rgba(255,255,255,0.2);
+            transform: scale(1.05);
+        }
+
+        .reaction.active {
+            background: var(--primary);
+        }
+
+        /* File attachments */
+        .attachment-preview {
+            margin-top: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            padding: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .attachment-icon {
+            font-size: 24px;
+        }
+
+        .attachment-info {
+            flex: 1;
+        }
+
+        .attachment-name {
+            font-weight: 500;
+            margin-bottom: 2px;
+        }
+
+        .attachment-size {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Voice messages */
+        .voice-message {
+            width: 100%;
+            padding: 10px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            margin-top: 8px;
+        }
+
+        .voice-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .voice-button {
+            background: none;
+            border: none;
+            color: var(--text);
+            cursor: pointer;
+            font-size: 20px;
+            padding: 4px;
+            border-radius: 50%;
+            transition: all 0.2s;
+        }
+
+        .voice-button:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .voice-waveform {
+            height: 40px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 4px;
+        }
+
+        /* Search bar */
+        .search-bar {
+            padding: 10px 20px;
+            border-bottom: 1px solid #333;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--bg-dark);
+            border: 1px solid #444;
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 14px;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        /* Fixed position emoji picker */
+        .emoji-picker {
+            position: fixed;
+            bottom: 80px; /* Height of input area + padding */
+            right: 20px;
+            background: var(--bg-light);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            padding: 10px;
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 4px;
+            z-index: 1000;
+        }
+
+        .emoji-item {
+            padding: 4px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .emoji-item:hover {
+            background: rgba(255,255,255,0.1);
+            transform: scale(1.1);
+        }
+
+        /* Message context menu */
+        .context-menu {
+            position: absolute;
+            background: var(--bg-light);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            padding: 4px;
+            z-index: 100;
+        }
+
+        .context-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .context-item:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        /* Reply thread */
+        .reply-thread {
+            border-left: 2px solid var(--primary);
+            padding-left: 12px;
+            margin: 4px 0;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* Message status with typing */
+        .message-typing {
+            font-style: italic;
+            color: var(--text-secondary);
+            font-size: 13px;
+            margin: 8px 0;
+        }
+
+        /* Enhanced scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.3);
         }
     </style>
 </head>
@@ -420,20 +653,44 @@ HTML = '''
             </div>
             <div class="messages" ref="messages">
                 <div v-for="message in messages" :key="message.id">
-                    <div :class="['message', message.sender === 'user' ? 'sent' : 'received']">
+                    <div :class="['message', message.sender === 'user' ? 'sent' : 'received']"
+                         @contextmenu.prevent="showContextMenu($event, message)">
+                        <div v-if="message.replyTo" class="reply-thread">
+                            Replying to: {{ message.replyTo.text }}
+                        </div>
                         {{ message.text }}
+                        <div v-if="message.attachment" class="attachment-preview">
+                            <span class="attachment-icon">📎</span>
+                            <div class="attachment-info">
+                                <div class="attachment-name">{{ message.attachment.name }}</div>
+                                <div class="attachment-size">{{ message.attachment.size }}</div>
+                            </div>
+                        </div>
+                        <div v-if="message.voice" class="voice-message">
+                            <div class="voice-controls">
+                                <button class="voice-button">▶️</button>
+                                <span>0:00</span>
+                            </div>
+                            <div class="voice-waveform" :ref="'waveform-' + message.id"></div>
+                        </div>
+                        <div class="message-reactions">
+                            <div v-for="(count, emoji) in message.reactions" 
+                                 :key="emoji"
+                                 :class="['reaction', isReacted(message.id, emoji) && 'active']"
+                                 @click="toggleReaction(message.id, emoji)">
+                                {{ emoji }} {{ count }}
+                            </div>
+                        </div>
                         <div class="message-time">
                             {{ message.timestamp }}
                             <span v-if="message.sender === 'user'" class="message-status">
-                                ✓✓
+                                {{ message.status === 'sent' ? '✓' : '✓✓' }}
                             </span>
                         </div>
                     </div>
                 </div>
-                <div v-if="isTyping" class="typing-indicator">
-                    <div class="typing-dot"></div>
-                    <div class="typing-dot"></div>
-                    <div class="typing-dot"></div>
+                <div v-if="isTyping" class="message-typing">
+                    {{ typingUser }} is typing...
                 </div>
             </div>
             <div class="input-area">
@@ -455,6 +712,19 @@ HTML = '''
                     Send
                 </button>
             </div>
+            <div v-if="contextMenu.show" 
+                 class="context-menu"
+                 :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }">
+                <div class="context-item" @click="replyToMessage">
+                    ↩️ Reply
+                </div>
+                <div class="context-item" @click="forwardMessage">
+                    ↪️ Forward
+                </div>
+                <div class="context-item" @click="deleteMessage">
+                    🗑️ Delete
+                </div>
+            </div>
         </div>
     </div>
 
@@ -468,7 +738,18 @@ HTML = '''
                     contacts: [],
                     newMessage: '',
                     isTyping: false,
-                    selectedContact: null
+                    selectedContact: null,
+                    showEmojiPicker: false,
+                    isRecording: false,
+                    contextMenu: {
+                        show: false,
+                        x: 0,
+                        y: 0,
+                        message: null
+                    },
+                    emojis: ['😊', '😂', '❤️', '👍', '🎉', '🔥', '😎', '🤔'],
+                    typingUser: null,
+                    replyingTo: null
                 }
             },
             methods: {
@@ -514,11 +795,80 @@ HTML = '''
                 },
                 selectContact(contact) {
                     this.selectedContact = contact
+                },
+                handleInput(event) {
+                    this.newMessage = event.target.innerText
+                },
+                handlePaste(event) {
+                    event.preventDefault()
+                    const text = event.clipboardData.getData('text/plain')
+                    document.execCommand('insertText', false, text)
+                },
+                handleDrop(event) {
+                    event.preventDefault()
+                    const items = event.dataTransfer.items
+                    for (let item of items) {
+                        if (item.kind === 'file') {
+                            const file = item.getAsFile()
+                            this.handleFile(file)
+                        }
+                    }
+                },
+                handleFile(file) {
+                    // Handle file upload logic here
+                    console.log('File to upload:', file)
+                },
+                toggleEmojiPicker() {
+                    this.showEmojiPicker = !this.showEmojiPicker
+                },
+                insertEmoji(emoji) {
+                    this.newMessage += emoji
+                    this.showEmojiPicker = false
+                },
+                startRecording() {
+                    this.isRecording = true
+                    // Add recording logic here
+                },
+                stopRecording() {
+                    this.isRecording = false
+                    // Add stop recording logic here
+                },
+                showContextMenu(event, message) {
+                    this.contextMenu = {
+                        show: true,
+                        x: event.clientX,
+                        y: event.clientY,
+                        message
+                    }
+                },
+                replyToMessage() {
+                    this.replyingTo = this.contextMenu.message
+                    this.contextMenu.show = false
+                },
+                forwardMessage() {
+                    // Add forward logic here
+                    this.contextMenu.show = false
+                },
+                deleteMessage() {
+                    // Add delete logic here
+                    this.contextMenu.show = false
+                },
+                isReacted(messageId, emoji) {
+                    // Add reaction check logic here
+                    return false
+                },
+                toggleReaction(messageId, emoji) {
+                    // Add reaction toggle logic here
                 }
             },
             mounted() {
                 this.loadMessages()
                 this.loadContacts()
+                
+                // Close context menu on click outside
+                document.addEventListener('click', () => {
+                    this.contextMenu.show = false
+                })
             }
         }).mount('#app')
     </script>
