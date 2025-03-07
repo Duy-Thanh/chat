@@ -21,6 +21,29 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.jinja_env.variable_start_string = '[['
 app.jinja_env.variable_end_string = ']]'
 
+# Update allowed extensions and MIME types
+ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'mp3', 'wav', 'mp4', 'doc', 'docx'}
+ALLOWED_MIMETYPES = {
+    'text/plain',
+    'application/pdf',
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'audio/mpeg',
+    'audio/wav',
+    'video/mp4',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+}
+
+def allowed_file(file):
+    # Check both extension and MIME type
+    extension = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+    return (
+        extension in ALLOWED_EXTENSIONS and
+        file.content_type in ALLOWED_MIMETYPES
+    )
+
 class ChatAPI:
     def __init__(self):
         self.messages = []
@@ -30,25 +53,20 @@ class ChatAPI:
             {"id": 3, "name": "Charlie", "status": "offline", "last_message": "Meeting at 3 PM", "time": "Yesterday"}
         ]
         self.typing_users = set()
-        self.reactions = {}  # message_id -> {emoji: [user_ids]}
+        self.reactions = {}
 
-    def send_message(self, message, file=None, reply_to=None):
+    def send_message(self, message, attachment=None):
         timestamp = datetime.datetime.now().strftime("%H:%M")
         new_message = {
             "id": len(self.messages) + 1,
             "text": message,
             "sender": "user",
             "timestamp": timestamp,
-            "reactions": {},
-            "reply_to": reply_to
+            "reactions": {}
         }
         
-        if file:
-            new_message["attachment"] = {
-                "name": file.filename,
-                "path": file.filename,
-                "type": file.content_type
-            }
+        if attachment:
+            new_message["attachment"] = attachment
         
         self.messages.append(new_message)
         return new_message
@@ -87,30 +105,56 @@ def index():
 @app.route('/api/messages', methods=['GET', 'POST'])
 def handle_messages():
     if request.method == 'POST':
-        data = request.json or {}
-        message = data.get('message', '')
-        reply_to = data.get('reply_to')
-        file = request.files.get('file')
-        
-        if file:
-            filename = secure_filename(file.filename)
-            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        
-        new_message = chat_api.send_message(message, file, reply_to)
-        
-        # Simulate received message
-        timestamp = datetime.datetime.now().strftime("%H:%M")
-        echo_message = {
-            "id": len(chat_api.messages) + 1,
-            "text": f"Echo: {message}",
-            "sender": "other",
-            "timestamp": timestamp,
-            "reactions": {}
-        }
-        chat_api.messages.append(echo_message)
-        return jsonify({"sent": new_message, "received": echo_message})
+        try:
+            if 'file' in request.files:
+                file = request.files['file']
+                
+                print(f"Received file: {file.filename}, MIME type: {file.content_type}")
+                
+                if file and file.filename:
+                    if not allowed_file(file):
+                        return jsonify({
+                            "error": f"File type not allowed. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"
+                        }), 415
+                    
+                    filename = secure_filename(file.filename)
+                    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                    
+                    # Ensure upload directory exists
+                    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+                    
+                    # Save the file
+                    file.save(filepath)
+                    
+                    # Create attachment info
+                    attachment = {
+                        'name': filename,
+                        'path': f'/uploads/{filename}',
+                        'type': file.content_type,
+                        'size': os.path.getsize(filepath)
+                    }
+                    
+                    # Create messages with attachment info
+                    message = request.form.get('message', f'Sent a file: {filename}')
+                    new_message = chat_api.send_message(message, attachment)
+                    echo_message = chat_api.send_message(f"Received your file: {filename}", attachment)
+                    echo_message['sender'] = 'other'
+                    
+                    return jsonify({"sent": new_message, "received": echo_message})
+                return jsonify({"error": "No file provided"}), 400
+            else:
+                # Handle regular text messages
+                data = request.get_json(silent=True) or {}
+                message = data.get('message', '')
+                new_message = chat_api.send_message(message)
+                echo_message = chat_api.send_message(f"Echo: {message}")
+                echo_message['sender'] = 'other'
+                return jsonify({"sent": new_message, "received": echo_message})
+        except Exception as e:
+            print(f"Error handling message: {str(e)}")
+            return jsonify({"error": str(e)}), 500
     else:
-        return jsonify(chat_api.get_messages())
+        return jsonify(chat_api.messages)
 
 @app.route('/api/messages/<int:message_id>/reactions', methods=['POST'])
 def handle_reactions(message_id):
@@ -1059,6 +1103,23 @@ HTML = '''
                     const file = event.target.files[0];
                     if (!file) return;
 
+                    // Check file size (16MB limit)
+                    if (file.size > 16 * 1024 * 1024) {
+                        alert('File is too large. Maximum size is 16MB.');
+                        this.$refs.fileInput.value = '';
+                        return;
+                    }
+
+                    // Check file type
+                    const fileExtension = file.name.split('.').pop().toLowerCase();
+                    const allowedExtensions = ['txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'mp3', 'wav', 'mp4', 'doc', 'docx'];
+                    
+                    if (!allowedExtensions.includes(fileExtension)) {
+                        alert(`File type not allowed. Allowed types: ${allowedExtensions.join(', ')}`);
+                        this.$refs.fileInput.value = '';
+                        return;
+                    }
+
                     const formData = new FormData();
                     formData.append('file', file);
                     formData.append('message', `Sent a file: ${file.name}`);
@@ -1069,14 +1130,19 @@ HTML = '''
                                 'Content-Type': 'multipart/form-data'
                             }
                         });
-                        this.messages.push(response.data.sent);
-                        this.scrollToBottom();
+                        
+                        if (response.data.sent) {
+                            this.messages.push(response.data.sent);
+                            this.messages.push(response.data.received);
+                            this.scrollToBottom();
+                        }
                     } catch (error) {
-                        console.error('Error uploading file:', error);
+                        const errorMessage = error.response?.data?.error || 'Upload failed';
+                        console.error('Error uploading file:', errorMessage);
+                        alert('File upload failed: ' + errorMessage);
+                    } finally {
+                        this.$refs.fileInput.value = '';
                     }
-                    
-                    // Reset file input
-                    this.$refs.fileInput.value = '';
                 },
                 toggleVoiceRecording() {
                     if (!this.isRecording) {
