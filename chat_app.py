@@ -253,13 +253,17 @@ HTML = '''
             display: flex;
             flex-direction: column;
             gap: 10px;
-            margin-bottom: 80px; /* Height of input area */
+            margin-bottom: 90px; /* Height of input area + hint */
         }
 
         .message {
             max-width: 70%;
             padding: 12px 16px;
+            margin: 5px 0;
             border-radius: 18px;
+            word-break: break-word;
+            white-space: pre-wrap;
+            line-height: 1.5;
             position: relative;
             animation: fadeIn 0.3s ease;
         }
@@ -271,13 +275,13 @@ HTML = '''
 
         .message.sent {
             background: var(--primary);
-            align-self: flex-end;
+            margin-left: auto;
             border-bottom-right-radius: 5px;
         }
 
         .message.received {
             background: var(--secondary);
-            align-self: flex-start;
+            margin-right: auto;
             border-bottom-left-radius: 5px;
         }
 
@@ -295,84 +299,144 @@ HTML = '''
             color: rgba(255,255,255,0.7);
         }
 
-        /* Fixed position input area with controlled height */
+        /* Input area with proper spacing for hint */
         .input-area {
             position: fixed;
             bottom: 0;
             right: 0;
-            left: 300px; /* Width of sidebar */
+            left: 300px;
             background: var(--bg-light);
-            padding: 15px 20px;
-            border-top: 1px solid #333;
+            padding: 15px 20px 25px; /* Increased bottom padding */
+            border-top: 1px solid rgba(255,255,255,0.1);
             display: flex;
-            gap: 10px;
-            height: 70px; /* Fixed height */
+            gap: 12px;
+            align-items: flex-end;
         }
 
+        /* Input wrapper with space for hint */
         .input-wrapper {
             flex: 1;
             display: flex;
-            background: var(--bg-dark);
-            border-radius: 20px;
-            padding: 8px 16px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 24px;
+            padding: 12px 16px;
             position: relative;
-            height: 40px; /* Fixed height */
-            align-items: center;
+            min-height: 48px;
+            align-items: flex-end;
+            margin-bottom: 10px; /* Add margin for hint */
         }
 
-        /* Message input with scroll */
+        .input-wrapper:focus-within {
+            background: rgba(255,255,255,0.08);
+            box-shadow: 0 0 0 2px rgba(255,255,255,0.1);
+        }
+
+        /* Improved textarea styling */
         .message-input {
             flex: 1;
-            height: 24px;
             background: transparent;
             border: none;
             color: var(--text);
             font-size: 14px;
+            line-height: 1.5;
             padding: 0;
-            overflow-x: hidden;
-            white-space: nowrap;
-            text-overflow: ellipsis;
+            margin: 0;
+            min-height: 24px;
+            max-height: 120px;
+            resize: none;
+            overflow-y: auto;
+            font-family: inherit;
         }
 
         .message-input:focus {
             outline: none;
         }
 
-        /* Input actions */
+        .message-input::placeholder {
+            color: rgba(255,255,255,0.4);
+        }
+
+        /* Enhanced action buttons */
         .input-actions {
             display: flex;
             gap: 8px;
-            align-items: center;
-            margin-left: 8px;
+            margin-left: 12px;
+            padding-bottom: 2px;
         }
 
         .action-button {
-            background: none;
+            background: transparent;
             border: none;
-            color: var(--text);
+            color: var(--text-secondary);
             cursor: pointer;
-            padding: 4px;
-            font-size: 18px;
-            opacity: 0.7;
-            transition: all 0.2s;
+            padding: 6px;
+            font-size: 20px;
+            border-radius: 50%;
+            transition: all 0.2s ease;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .action-button:hover {
-            opacity: 1;
+            background: rgba(255,255,255,0.1);
+            color: var(--text);
+            transform: scale(1.1);
         }
 
-        /* Send button */
+        /* Enhanced send button */
         .send-button {
             background: var(--primary);
             color: white;
             border: none;
-            border-radius: 20px;
-            padding: 8px 20px;
+            border-radius: 24px;
+            padding: 12px 24px;
             font-size: 14px;
+            font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s;
-            height: 40px;
-            white-space: nowrap;
+            transition: all 0.2s ease;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .send-button:hover {
+            background: var(--primary-light);
+            transform: scale(1.02);
+        }
+
+        /* Scrollbar styling */
+        .message-input::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .message-input::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .message-input::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+        }
+
+        .message-input::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        /* Input hint styling */
+        .input-hint {
+            position: absolute;
+            bottom: -22px; /* Adjusted position */
+            left: 16px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            opacity: 0.7;
+            pointer-events: none;
+            white-space: nowrap; /* Prevent wrapping */
+            z-index: 1; /* Ensure hint stays above other elements */
         }
 
         /* Typing indicator */
@@ -695,22 +759,23 @@ HTML = '''
             </div>
             <div class="input-area">
                 <div class="input-wrapper">
-                    <input 
-                        type="text" 
+                    <textarea 
                         class="message-input"
                         v-model="newMessage" 
-                        @keyup.enter="sendMessage" 
+                        @keydown.enter.exact.prevent="sendMessage"
+                        @keydown.shift.enter.exact="newline"
+                        @input="autoResize"
                         placeholder="Type a message..."
-                    >
+                        rows="1"
+                    ></textarea>
+                    <small class="input-hint">Shift + Enter for new line</small>
                     <div class="input-actions">
                         <button class="action-button">😊</button>
                         <button class="action-button">📎</button>
                         <button class="action-button">🎤</button>
                     </div>
                 </div>
-                <button class="send-button" @click="sendMessage">
-                    Send
-                </button>
+                <button class="send-button" @click="sendMessage">Send</button>
             </div>
             <div v-if="contextMenu.show" 
                  class="context-menu"
@@ -859,6 +924,21 @@ HTML = '''
                 },
                 toggleReaction(messageId, emoji) {
                     // Add reaction toggle logic here
+                },
+                newline(event) {
+                    const textarea = event.target;
+                    const start = textarea.selectionStart;
+                    const end = textarea.selectionEnd;
+                    this.newMessage = this.newMessage.substring(0, start) + "\\n" + this.newMessage.substring(end);
+                    this.$nextTick(() => {
+                        textarea.selectionStart = textarea.selectionEnd = start + 1;
+                    });
+                },
+                autoResize(event) {
+                    const textarea = event.target;
+                    textarea.style.height = "24px";
+                    const newHeight = Math.min(textarea.scrollHeight, 100);
+                    textarea.style.height = newHeight + "px";
                 }
             },
             mounted() {
